@@ -1,10 +1,11 @@
 import subprocess
 from subprocess import STDOUT
-
+from config import cwd
 
 def run_bash_command(command):
     result = subprocess.run(
         command,
+        cwd=cwd,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=STDOUT,
@@ -16,8 +17,3 @@ def run_bash_command(command):
         "returncode": result.returncode,
         "output": result.stdout,
     }
-
-
-if __name__ == "__main__":
-    result = run_bash_command("cat .gitignore")
-    print(result)
