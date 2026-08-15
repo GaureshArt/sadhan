@@ -14,10 +14,10 @@ def step(state):
     return response
 
 
-def agent():
+def agent(task):
     state = init_state()
     add_message(state,role='system',content=system_propmt)
-    add_message(state,role='user',content=input("Enter your task: "))
+    add_message(state,role='user',content=task)
     while True:
         try:
             if state['n_calls'] >= state['step_limit']:
@@ -34,9 +34,3 @@ def agent():
             add_message(state,role='user',content=f"Agent error : {e}")
         finally:
             state['n_calls']+=1    
-
-
-
-
-if __name__ == "__main__":
-    agent()
