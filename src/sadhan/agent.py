@@ -27,8 +27,8 @@ def agent(task):
             output = step(state)
             print(state['messages'][-1])
             if output['action'] == 'echo TASK_COMPLETE':
-                print("Task  complete")
-                break
+                print("Task complete")
+                return {"status": "complete"}
         except Exception as e:
             state['n_errors']+=1
             add_message(state,role='user',content=f"Agent error : {e}")
