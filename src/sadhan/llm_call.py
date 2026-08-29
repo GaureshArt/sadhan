@@ -1,18 +1,69 @@
-from ollama import chat
-from config import model
-from state import add_message
-from parser import parser
-def llm_call(state:dict):
-    response = chat(
+from ollama import Client
+from .config import model
+from .state import add_message
+from .parser import parser
+
+client = Client()
+
+TAGS = ('<reasoning>', '</reasoning>', '<action>', '</action>')
+
+def llm_call(state, emit):
+    stream = client.chat(
         model=model,
         messages=state['messages'],
-        think=False
+        think=False,
+        stream=True,
     )
-    content = response['message']['content']
-    add_message(state,role='assistant',content=content)
-    print(content)
-    return parser(content)
 
+    content = []
+    pos = 0
+    seg_start = 0
+    mode = 'pre'
+    action_parts = []
+    holdback = max(len(t) for t in TAGS) - 1
 
-# if __name__ == "__main__":
-#     llm_call({'messages':[{'role':'user','content':'Hello '}]})
+    def flush_segment(end):
+        nonlocal seg_start
+        text = ''.join(content)[seg_start:end]
+        if mode == 'reasoning' and text:
+            emit({'type': 'reasoning_token', 'text': text})
+        elif mode == 'action':
+            action_parts.append(text)
+        seg_start = end
+
+    def process(final):
+        nonlocal pos, mode, seg_start
+        text = ''.join(content)
+        limit = len(text) if final else len(text) - holdback
+        while pos < limit:
+            tag = next((t for t in TAGS if text.startswith(t, pos)), None)
+            if tag is not None:
+                flush_segment(pos)
+                if tag == '<reasoning>':
+                    mode = 'reasoning'
+                elif tag == '</reasoning>':
+                    mode = 'post'
+                elif tag == '<action>':
+                    mode = 'action'
+                elif tag == '</action>':
+                    if mode == 'action':
+                        emit({'type': 'action', 'command': ''.join(action_parts).strip()})
+                    mode = 'done'
+                pos += len(tag)
+                seg_start = pos
+                continue
+            if text[pos] == '<' and not final:
+                if any(t.startswith(text[pos:]) for t in TAGS):
+                    break
+            pos += 1
+
+    for chunk in stream:
+        delta = chunk['message']['content']
+        if delta:
+            content.append(delta)
+            process(final=False)
+    process(final=True)
+
+    full = ''.join(content)
+    add_message(state, role='assistant', content=full)
+    return parser(full)
