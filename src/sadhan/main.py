@@ -1,4 +1,4 @@
-from agent import agent
+from .agent import agent
 def main():
     while True:
         task = input("What do you want to do? (or 'exit' to quit)\n")
