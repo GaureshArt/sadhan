@@ -1,4 +1,4 @@
-from config import step_limit,max_errors,cwd
+from .config import step_limit,max_errors,cwd
 def init_state():
     return {
         "messages": [],
