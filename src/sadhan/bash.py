@@ -1,10 +1,22 @@
+import os
 import queue
 import re
+import signal
 import subprocess
 import threading
+import time
 from uuid import uuid4
 
 from .config import blocked_patterns, cwd, max_output_bytes, timeout
+from .control import is_cancelled
+
+
+def _killpg():
+    if shell is not None and shell.poll() is None:
+        try:
+            os.killpg(os.getpgid(shell.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 def _strip_heredocs(command):
@@ -79,13 +91,20 @@ def run_bash_command(command):
 
     chunks = []
     total = 0
+    started = time.monotonic()
     while True:
-        try:
-            data = _q.get(timeout=timeout)
-        except queue.Empty:
-            shell.kill()
+        if is_cancelled():
+            _killpg()
             shell = None
-            return {"returncode": -1, "output": "".join(chunks) + "\n[COMMAND TIMED OUT]"}
+            return {"returncode": -1, "output": "".join(chunks) + "\n[CANCELLED]"}
+        try:
+            data = _q.get(timeout=0.2)
+        except queue.Empty:
+            if time.monotonic() - started > timeout:
+                _killpg()
+                shell = None
+                return {"returncode": -1, "output": "".join(chunks) + "\n[COMMAND TIMED OUT]"}
+            continue
         if data is None:
             shell = None
             return {"returncode": -1, "output": "".join(chunks) + "\n[SHELL DIED]"}
@@ -101,7 +120,7 @@ def run_bash_command(command):
                 return {"returncode": int(m.group(1)), "output": "".join(chunks)}
             total += len(line)
             if total > max_output_bytes:
-                shell.kill()
+                _killpg()
                 shell = None
                 return {"returncode": -1, "output": "".join(chunks) + "\n[OUTPUT LIMIT EXCEEDED]"}
             chunks.append(line + "\n")

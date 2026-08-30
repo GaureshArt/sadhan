@@ -7,6 +7,7 @@ from textual.widgets import Footer, Input, RichLog, Static
 from .agent import agent
 from .bash import run_bash_command
 from .config import model
+from . import control as control_mod
 
 GRADIENT = ["#00e5ff", "#38bdf8", "#818cf8", "#c084fc", "#e879f9"]
 
@@ -75,6 +76,7 @@ class SadhanApp(App):
         self.steps = 0
         self.busy = False
         self.started = False
+        self._run_id = 0
         self._reasoning = Text()
         self._reasoning_words = 0
 
@@ -113,7 +115,13 @@ class SadhanApp(App):
 
     def action_cancel_task(self) -> None:
         if self.busy:
+            control_mod.cancelled.set()
             self.workers.cancel_group(self, "task")
+            self._flush_reasoning()
+            self.busy = False
+            self.prompt.disabled = False
+            self.prompt.focus()
+            self.write_styled("cancel requested…", "yellow")
 
     def write_styled(self, text: str, style: str = "") -> None:
         self.log_widget.write(Text(text, style=style))
@@ -125,6 +133,8 @@ class SadhanApp(App):
             self._reasoning_words = 0
 
     def handle_event(self, event: dict) -> None:
+        if "_run" in event and event["_run"] != self._run_id:
+            return
         t = event["type"]
         if t == "reasoning_token":
             self._reasoning.append(event["text"])
@@ -153,6 +163,8 @@ class SadhanApp(App):
                 self.write_styled("✓ task complete", "bold green")
             elif event.get("status") == "stopped":
                 self.write_styled(f"✗ stopped: {event['reason']}", "bold yellow")
+            elif event.get("status") == "cancelled":
+                self.write_styled("✗ cancelled", "bold yellow")
         elif t == "done":
             self._flush_reasoning()
             self.busy = False
@@ -166,18 +178,21 @@ class SadhanApp(App):
     def start_worker(self, fn) -> None:
         self.busy = True
         self.prompt.disabled = True
+        control_mod.new_run()
+        self._run_id += 1
+        rid = self._run_id
 
         def wrapped():
             try:
-                fn(lambda e: self.call_from_thread(self.handle_event, e))
+                fn(lambda e: self.call_from_thread(self.handle_event, {**e, "_run": rid}))
             except Exception as e:
                 try:
-                    self.call_from_thread(self.handle_event, {"type": "error", "message": str(e)})
+                    self.call_from_thread(self.handle_event, {"type": "error", "message": str(e), "_run": rid})
                 except Exception:
                     pass
             finally:
                 try:
-                    self.call_from_thread(self.handle_event, {"type": "done"})
+                    self.call_from_thread(self.handle_event, {"type": "done", "_run": rid})
                 except Exception:
                     pass
 

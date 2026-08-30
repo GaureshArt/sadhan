@@ -2,6 +2,7 @@
 
 from .state import add_message, init_state
 from .bash import run_bash_command
+from .control import CancelRequested, is_cancelled
 from .prompt import system_prompt
 from .llm_call import llm_call
 
@@ -21,6 +22,8 @@ def _print_event(event):
             print("Task complete")
         elif event.get('status') == 'stopped':
             print(f"Agent stopped : {event['reason']}")
+        elif event.get('status') == 'cancelled':
+            print("Agent cancelled")
 
 
 def step(state, emit):
@@ -38,6 +41,9 @@ def agent(task, emit=_print_event):
     add_message(state,role='user',content=task)
     while True:
         try:
+            if is_cancelled():
+                emit({'type': 'status', 'status': 'cancelled'})
+                return {"status": "cancelled"}
             if state['n_calls'] >= state['step_limit']:
                 emit({'type': 'status', 'status': 'stopped', 'reason': 'step limit reached'})
                 return {"status": "stopped", "reason": "step_limit"}
@@ -48,6 +54,9 @@ def agent(task, emit=_print_event):
             if output['action'] == 'echo "TASK_COMPLETE"':
                 emit({'type': 'status', 'status': 'complete'})
                 return {"status": "complete"}
+        except CancelRequested:
+            emit({'type': 'status', 'status': 'cancelled'})
+            return {"status": "cancelled"}
         except Exception as e:
             state['n_errors']+=1
             emit({'type': 'error', 'message': str(e)})

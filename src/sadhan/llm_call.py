@@ -1,5 +1,9 @@
+import queue
+import threading
+
 from ollama import Client
 from .config import model
+from .control import CancelRequested, is_cancelled
 from .state import add_message
 from .parser import parser
 
@@ -14,6 +18,18 @@ def llm_call(state, emit):
         think=False,
         stream=True,
     )
+
+    q = queue.Queue()
+
+    def pump():
+        try:
+            for chunk in stream:
+                q.put(chunk)
+        except Exception as e:
+            q.put(e)
+        q.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
 
     content = []
     pos = 0
@@ -57,7 +73,17 @@ def llm_call(state, emit):
                     break
             pos += 1
 
-    for chunk in stream:
+    while True:
+        if is_cancelled():
+            raise CancelRequested
+        try:
+            chunk = q.get(timeout=0.2)
+        except queue.Empty:
+            continue
+        if chunk is None:
+            break
+        if isinstance(chunk, Exception):
+            raise chunk
         delta = chunk['message']['content']
         if delta:
             content.append(delta)
