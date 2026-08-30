@@ -1,4 +1,5 @@
 import pyfiglet
+from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -12,30 +13,43 @@ from . import control as control_mod
 
 REASON = "#c084fc"
 ACTION = "#38bdf8"
+OUT_BG = "on #191b22"
 REASON_OPEN = "▶  Reasoning"
 REASON_EXPANDED = "▼  Reasoning"
 ACTION_OPEN = "▶  Action"
 ACTION_EXPANDED = "▼  Action"
 MINIMIZE = "▲  Minimize"
 
+_UID = 0
+
+
+def _fold_mark(text: Text, uid: int) -> Text:
+    text.stylize(Style(meta={"fold": uid}))
+    return text
+
 
 class _Log(RichLog):
     def on_click(self, event: events.Click) -> None:
-        row = int(event.y) + int(self.scroll_offset.y)
-        self.app.on_log_click(row)
+        meta = event.style.meta if event.style else None
+        if meta and "fold" in meta:
+            self.app.on_fold(meta["fold"])
         event.stop()
 
 
 class _Block:
-    __slots__ = ("kind", "body", "rend", "rc", "foldable", "collapsed")
+    __slots__ = ("uid", "kind", "body", "rend", "rc", "foldable", "collapsed", "live")
 
-    def __init__(self, kind, body="", rend=None, rc=None, foldable=False, collapsed=False):
+    def __init__(self, kind, body="", rend=None, rc=None, foldable=False, collapsed=False, live=False):
+        global _UID
+        _UID += 1
+        self.uid = _UID
         self.kind = kind
         self.body = body
         self.rend = rend if rend is not None else Text(body)
         self.rc = rc
         self.foldable = foldable
         self.collapsed = collapsed
+        self.live = live
 
     @property
     def n_lines(self) -> int:
@@ -45,19 +59,21 @@ class _Block:
         k = self.kind
         if k == "reasoning":
             if self.collapsed:
-                return [Text(REASON_OPEN, f"bold {REASON}")]
-            return [
-                Text(REASON_EXPANDED, f"bold {REASON}"),
+                return [_fold_mark(Text(REASON_OPEN, f"bold {REASON}"), self.uid)]
+            parts = [
+                _fold_mark(Text(REASON_EXPANDED, f"bold {REASON}"), self.uid),
                 self.rend,
-                Text(MINIMIZE, f"{REASON}"),
             ]
+            if not self.live:
+                parts.append(_fold_mark(Text(MINIMIZE, f"{REASON}"), self.uid))
+            return parts
         if k == "action":
             if self.collapsed:
-                return [Text(ACTION_OPEN, f"bold {ACTION}")]
+                return [_fold_mark(Text(ACTION_OPEN, f"bold {ACTION}"), self.uid)]
             return [
-                Text(ACTION_EXPANDED, f"bold {ACTION}"),
+                _fold_mark(Text(ACTION_EXPANDED, f"bold {ACTION}"), self.uid),
                 Text(f"$ {self.body}", f"bold {ACTION}"),
-                Text(MINIMIZE, f"{ACTION}"),
+                _fold_mark(Text(MINIMIZE, f"{ACTION}"), self.uid),
             ]
         if k == "result":
             ok = self.rc == 0
@@ -65,14 +81,16 @@ class _Block:
             if not self.foldable:
                 return [
                     Text(f"$ exit={self.rc}", style),
-                    Text(self.body, "dim"),
+                    Text(self.body, f"dim {OUT_BG}"),
                 ]
             if self.collapsed:
-                return [Text(f"▶  Output ({self.n_lines} lines) · exit={self.rc}", style)]
+                return [
+                    _fold_mark(Text(f"▶  Output ({self.n_lines} lines) · exit={self.rc}", style), self.uid)
+                ]
             return [
-                Text(f"▼  Output ({self.n_lines} lines) · exit={self.rc}", style),
-                Text(self.body, "dim"),
-                Text(MINIMIZE, "dim"),
+                _fold_mark(Text(f"▼  Output ({self.n_lines} lines) · exit={self.rc}", style), self.uid),
+                Text(self.body, f"dim {OUT_BG}"),
+                _fold_mark(Text(MINIMIZE, "dim"), self.uid),
             ]
         return [self.rend]
 
@@ -146,11 +164,10 @@ class SadhanApp(App):
         self.busy = False
         self.started = False
         self._run_id = 0
-        self._reasoning = Text()
-        self._reasoning_words = 0
         self._transcript: list[str] = []
         self._last_output = ""
         self._history: list[_Block] = []
+        self._cur: _Block | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(render_banner(), id="banner")
@@ -189,7 +206,7 @@ class SadhanApp(App):
         if self.busy:
             control_mod.cancelled.set()
             self.workers.cancel_group(self, "task")
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self.busy = False
             self.prompt.disabled = False
             self.prompt.focus()
@@ -201,14 +218,23 @@ class SadhanApp(App):
     def _notify(self, text: str, style: str = "") -> None:
         self.log_widget.write(Text(text, style=style))
 
-    def _flush_reasoning(self) -> None:
-        if self._reasoning:
-            body = self._reasoning.plain
-            self._append_block(
-                _Block("reasoning", body, rend=self._reasoning, foldable=True, collapsed=True)
-            )
-            self._reasoning = Text()
-            self._reasoning_words = 0
+    def _stream_reasoning(self, text: str) -> None:
+        if self._cur is None:
+            self._cur = _Block("reasoning", "", rend=Text(), foldable=True, collapsed=True, live=True)
+            self._history.append(self._cur)
+            for renderable in self._cur.render():
+                self.log_widget.write(renderable)
+        self._cur.body += text
+        self._cur.rend.append(text)
+        if not self._cur.collapsed:
+            self.log_widget.write(Text(text))
+
+    def _finalize_reasoning(self) -> None:
+        if self._cur is not None:
+            self._cur.live = False
+            self._transcript.append(self._cur.body)
+            self._cur = None
+            self._rebuild_log()
 
     def _append_block(self, block: _Block) -> None:
         self._history.append(block)
@@ -229,45 +255,16 @@ class SadhanApp(App):
             for renderable in block.render():
                 self.log_widget.write(renderable)
 
-    def _rendered_rows(self, block: _Block) -> int:
-        if block.kind == "result" and not block.foldable:
-            return 1 + block.n_lines
-        if block.collapsed:
-            return 1
-        return block.n_lines + 2
-
-    def _click_rows(self, block: _Block) -> set:
-        if block.collapsed:
-            return {0}
-        return {0, block.n_lines + 1}
-
-    def _block_at_row(self, row: int) -> _Block | None:
-        current = 0
+    def on_fold(self, uid: int) -> None:
         for block in self._history:
-            rows = self._rendered_rows(block)
-            if row < current + rows and block.foldable and (row - current) in self._click_rows(block):
-                return block
-            current += rows
-        return None
+            if block.uid == uid:
+                self._toggle_block(block)
+                return
 
     def _toggle_block(self, block: _Block) -> None:
         block.collapsed = not block.collapsed
         self._rebuild_log()
         self.refresh_status()
-
-    def action_copy_transcript(self) -> None:
-        content = "\n".join(self._transcript).strip("\n")
-        self._copy(content, "log")
-
-    def action_copy_output(self) -> None:
-        self._copy(self._last_output.rstrip("\n"), "last output")
-
-    def on_log_click(self, row: int) -> None:
-        if self.busy:
-            return
-        block = self._block_at_row(row)
-        if block is not None:
-            self._toggle_block(block)
 
     def _copy(self, content: str, what: str) -> None:
         if not content:
@@ -281,27 +278,31 @@ class SadhanApp(App):
         n = len(content.splitlines())
         self._notify(f"copied {what} ({n} {'line' if n == 1 else 'lines'}) to clipboard", "bold green")
 
+    def action_copy_transcript(self) -> None:
+        content = "\n".join(self._transcript).strip("\n")
+        self._copy(content, "log")
+
+    def action_copy_output(self) -> None:
+        self._copy(self._last_output.rstrip("\n"), "last output")
+
     def handle_event(self, event: dict) -> None:
         if "_run" in event and event["_run"] != self._run_id:
             return
         t = event["type"]
         if t == "reasoning_token":
-            self._reasoning.append(event["text"])
-            self._reasoning_words += len(event["text"].split())
-            if "\n" in event["text"] or self._reasoning_words >= 12:
-                self._flush_reasoning()
+            self._stream_reasoning(event["text"])
         elif t == "action":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self._append_block(
                 _Block(
                     "action",
                     event["command"],
                     foldable=True,
-                    collapsed=True,
+                    collapsed=False,
                 )
             )
         elif t == "result":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self.steps += 1
             output = event["output"].rstrip("\n")
             foldable = collapse_output and len(output.splitlines()) > fold_lines
@@ -317,10 +318,10 @@ class SadhanApp(App):
             self._last_output = event["output"]
             self.refresh_status()
         elif t == "error":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self.write_styled(f"agent error: {event['message']}", "bold red")
         elif t == "status":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             if event.get("status") == "complete":
                 self.write_styled("✓ task complete", "bold green")
             elif event.get("status") == "stopped":
@@ -328,13 +329,13 @@ class SadhanApp(App):
             elif event.get("status") == "cancelled":
                 self.write_styled("✗ cancelled", "bold yellow")
         elif t == "done":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self.busy = False
             self.prompt.disabled = False
             self.prompt.focus()
             self.write_styled("─" * 40, "dim")
         elif t == "user":
-            self._flush_reasoning()
+            self._finalize_reasoning()
             self.write_styled(f"\n❯ {event['text']}\n", "bold cyan")
 
     def start_worker(self, fn) -> None:

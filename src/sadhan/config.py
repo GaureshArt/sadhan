@@ -5,6 +5,9 @@ cwd = r"/home/gaureshart/Codebases/AI-Engineering/Projects/testing_sadhan"
 timeout = 60
 max_output_bytes = 100_000
 
+fold_lines = 8
+collapse_output = True
+
 blocked_patterns = [
     r"\bsudo\b", r"\bsu\s", r"\bshutdown\b", r"\breboot\b", r"\bpoweroff\b",
     r":\(\)\s*\{.*\}\s*;\s*:",
