@@ -68,6 +68,8 @@ class SadhanApp(App):
         ("ctrl+b", "toggle_mode", "Switch mode"),
         ("escape", "cancel_task", "Cancel task"),
         ("ctrl+q", "quit", "Quit"),
+        ("ctrl+y", "copy_transcript", "Copy log"),
+        ("ctrl+g", "copy_output", "Copy last output"),
     ]
 
     def __init__(self):
@@ -79,6 +81,8 @@ class SadhanApp(App):
         self._run_id = 0
         self._reasoning = Text()
         self._reasoning_words = 0
+        self._transcript: list[str] = []
+        self._last_output = ""
 
     def compose(self) -> ComposeResult:
         yield Static(render_banner(), id="banner")
@@ -125,9 +129,14 @@ class SadhanApp(App):
 
     def write_styled(self, text: str, style: str = "") -> None:
         self.log_widget.write(Text(text, style=style))
+        self._transcript.append(text)
+
+    def _notify(self, text: str, style: str = "") -> None:
+        self.log_widget.write(Text(text, style=style))
 
     def _flush_reasoning(self) -> None:
         if self._reasoning:
+            self._transcript.append(self._reasoning.plain)
             self.log_widget.write(self._reasoning)
             self._reasoning = Text()
             self._reasoning_words = 0
@@ -153,6 +162,7 @@ class SadhanApp(App):
                 "green" if ok else "red",
             )
             self.write_styled(event["output"].rstrip("\n"), "dim")
+            self._last_output = event["output"]
             self.refresh_status()
         elif t == "error":
             self._flush_reasoning()
@@ -227,6 +237,25 @@ class SadhanApp(App):
                 })
 
             self.start_worker(run)
+
+    def _copy(self, content: str, what: str) -> None:
+        if not content:
+            self._notify(f"no {what} to copy", "yellow")
+            return
+        try:
+            self.copy_to_clipboard(content)
+        except Exception as e:
+            self._notify(f"copy failed: {e}", "red")
+            return
+        n = len(content.splitlines())
+        self._notify(f"copied {what} ({n} {'line' if n == 1 else 'lines'}) to clipboard", "bold green")
+
+    def action_copy_transcript(self) -> None:
+        content = "\n".join(self._transcript).strip("\n")
+        self._copy(content, "log")
+
+    def action_copy_output(self) -> None:
+        self._copy(self._last_output.rstrip("\n"), "last output")
 
 
 def main():
