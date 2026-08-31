@@ -22,6 +22,7 @@ async def llm_call(state, emit):
     mode = 'pre'
     action_parts = []
     holdback = max(len(t) for t in TAGS) - 1
+    last_chunk = None
 
     def flush_segment(end):
         nonlocal seg_start
@@ -59,12 +60,17 @@ async def llm_call(state, emit):
             pos += 1
 
     async for chunk in stream:
+        last_chunk = chunk
         delta = chunk['message']['content']
         if delta:
             content.append(delta)
             process(final=False)
 
     process(final=True)
+
+    if last_chunk is not None:
+        tokens = last_chunk.get('eval_count', 0) + last_chunk.get('prompt_eval_count', 0)
+        emit({'type': 'usage', 'tokens': tokens})
 
     full = ''.join(content)
     add_message(state, role='assistant', content=full)
