@@ -1,23 +1,15 @@
 import asyncio
 
-import pyfiglet
 from rich.style import Style
 from rich.text import Text
-from textual import events
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
 from textual.widgets import Footer, Input, RichLog, Static
 
 from .agent import agent
 from .bash import run_bash_command
 from .config import collapse_output, fold_lines, model
 from .state import init_state
-
-REASON = "#8b8bf5"
-ACTION = "#38bdf8"
-OK = "#4ade80"
-FAIL = "#f87171"
-OUT_BG = "on #16171d"
+from . import theme
 
 uid_counter = 0
 
@@ -36,82 +28,73 @@ class Log(RichLog):
 
 
 class Block:
-    def __init__(self, kind, body="", rend=None, rc=None, foldable=False, collapsed=False, live=False):
+    def __init__(self, kind, body="", rc=None, foldable=False, collapsed=False):
         global uid_counter
         uid_counter += 1
         self.id = uid_counter
         self.kind = kind
         self.body = body
-        self.rend = rend if rend is not None else Text(body)
         self.rc = rc
         self.foldable = foldable
         self.collapsed = collapsed
-        self.live = live
 
     def n_lines(self):
         return len(self.body.splitlines())
 
     def render(self):
-        k = self.kind
-        if k == "reasoning":
+        if self.kind == "user":
+            return [Text(f"> {self.body}", f"bold {theme.USER}")]
+
+        if self.kind == "action":
+            head = f"$ {self.body.splitlines()[0]}" + (" …" if self.n_lines() > 1 else "")
             if self.collapsed:
-                return [fold_mark(Text("Reasoning", f"bold {REASON}"), self.id)]
-            parts = [fold_mark(Text("Reasoning", f"bold {REASON}"), self.id), self.rend]
-            if not self.live:
-                parts.append(fold_mark(Text("collapse", f"dim {REASON}"), self.id))
-            return parts
-        if k == "action":
-            if self.collapsed:
-                return [fold_mark(Text("Action", f"bold {ACTION}"), self.id)]
+                return [fold_mark(Text(head, f"{theme.ACTION_FG} {theme.ACTION_BG}"), self.id)]
             return [
-                fold_mark(Text("Action", f"bold {ACTION}"), self.id),
-                Text(f"$ {self.body}", f"bold {ACTION}"),
-                fold_mark(Text("collapse", f"dim {ACTION}"), self.id),
+                fold_mark(Text(f"$ {self.body}", f"{theme.ACTION_FG} {theme.ACTION_BG}"), self.id),
             ]
-        if k == "result":
-            color = OK if self.rc == 0 else FAIL
+
+        if self.kind == "result":
+            color = theme.OK if self.rc == 0 else theme.FAIL
+            tag = f"exit {self.rc}"
             if not self.foldable:
-                return [Text(f"exit={self.rc}", color), Text(self.body, f"dim {OUT_BG}")]
+                return [Text(tag, color), Text(self.body, f"{theme.OUT_FG} {theme.OUT_BG}")]
             if self.collapsed:
-                return [fold_mark(Text(f"Output ({self.n_lines()} lines) exit={self.rc}", color), self.id)]
+                return [fold_mark(Text(f"{tag}  ({self.n_lines()} lines, collapsed)", color), self.id)]
             return [
-                fold_mark(Text(f"Output ({self.n_lines()} lines) exit={self.rc}", color), self.id),
-                Text(self.body, f"dim {OUT_BG}"),
-                fold_mark(Text("collapse", "dim"), self.id),
+                fold_mark(Text(tag, color), self.id),
+                Text(self.body, f"{theme.OUT_FG} {theme.OUT_BG}"),
             ]
-        return [self.rend]
+
+        return [Text(self.body, "dim")]
 
 
 MODES = {
-    "build": {"border": "#38bdf8", "placeholder": "Describe a task...  (ctrl+b bash)", "label": "build"},
-    "bash": {"border": "#f472b6", "placeholder": "$ shell command  (ctrl+b build)", "label": "bash"},
+    "build": {"border": theme.BORDER_FOCUS, "placeholder": "describe a task…  ctrl+b for bash", "label": "build"},
+    "bash": {"border": theme.ACTION, "placeholder": "$ shell command  ctrl+b for build", "label": "bash"},
 }
-
-
-def render_banner():
-    art = pyfiglet.figlet_format("sadhan", font="small").splitlines()
-    text = Text(justify="center")
-    for line in art:
-        text.append(line + "\n", style="bold #38bdf8")
-    return text
 
 
 class SadhanApp(App):
     TITLE = "sadhan"
     AUTO_FOCUS = "#prompt"
 
-    CSS = """
-    Screen { background: $surface; }
-    #banner { height: auto; padding: 1 0; }
-    #log {
+    CSS = f"""
+    Screen {{ background: {theme.BG}; }}
+    #banner {{ height: auto; padding: 1 0 0 0; }}
+    #log {{
         height: 1fr;
-        padding: 1 2;
+        padding: 1 2 0 2;
         margin: 1 1 0 1;
-        border: round #2a2d3a;
-    }
-    #bottom { height: auto; padding: 0 1 1 1; }
-    #status { height: 1; padding: 0 2; color: $text-muted; }
-    #prompt { border: round #2a2d3a; }
+    }}
+    #status {{
+        height: 1;
+        padding: 0 2;
+        color: {theme.DIM};
+    }}
+    #prompt {{
+        margin: 1 1 1 1;
+        border: round {theme.BORDER};
+    }}
     """
 
     BINDINGS = [
@@ -119,28 +102,27 @@ class SadhanApp(App):
         ("escape", "cancel_task", "Cancel"),
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+y", "copy_transcript", "Copy log"),
-        ("ctrl+g", "copy_output", "Copy output"),
     ]
 
     def __init__(self):
         super().__init__()
         self.mode = "build"
         self.steps = 0
+        self.tokens = 0
         self.busy = False
         self.started = False
         self.run_id = 0
         self.state = None
         self.transcript = []
-        self.last_output = ""
         self.history = []
-        self.cur = None
+        self.reasoning_active = False
+        self.reasoning_buffer = []
 
     def compose(self) -> ComposeResult:
-        yield Static(render_banner(), id="banner")
+        yield Static(theme.banner(), id="banner")
         yield Log(id="log", highlight=True, wrap=True)
-        with Vertical(id="bottom"):
-            yield Static(self.status_line(), id="status")
-            yield Input(placeholder=MODES["build"]["placeholder"], id="prompt")
+        yield Static(self.status_line(), id="status")
+        yield Input(placeholder=MODES["build"]["placeholder"], id="prompt")
         yield Footer()
 
     def log_widget(self):
@@ -151,7 +133,7 @@ class SadhanApp(App):
 
     def status_line(self):
         m = MODES[self.mode]
-        return f" {m['label']}  ·  {model}  ·  steps {self.steps}  ·  click to expand  ·  esc cancel  ·  ctrl+b switch"
+        return f" {m['label']}  ·  {model}  ·  {self.steps} steps  ·  {self.tokens} tokens"
 
     def refresh_status(self):
         self.query_one("#status", Static).update(self.status_line())
@@ -171,26 +153,24 @@ class SadhanApp(App):
         if self.busy:
             self.workers.cancel_group(self, "task")
 
-    def write_styled(self, text, style=""):
-        self.append_block(Block("line", text, rend=Text(text, style=style)))
+    def write_line(self, text, style="dim"):
+        self.append_block(Block("line", text))
+        self.log_widget().write(Text(text, style=style))
 
     def stream_reasoning(self, text):
-        if self.cur is None:
-            self.cur = Block("reasoning", "", rend=Text(), foldable=True, collapsed=True, live=True)
-            self.history.append(self.cur)
-            for r in self.cur.render():
-                self.log_widget().write(r)
-        self.cur.body += text
-        self.cur.rend.append(text)
-        if not self.cur.collapsed:
-            self.log_widget().write(Text(text))
+        if not self.reasoning_active:
+            self.reasoning_active = True
+            self.reasoning_buffer = []
+            self.log_widget().write(Text("", style=f"bold {theme.REASON}"))
+        self.reasoning_buffer.append(text)
+        self.log_widget().write(Text(text, style=theme.REASON))
 
     def finalize_reasoning(self):
-        if self.cur is not None:
-            self.cur.live = False
-            self.transcript.append(self.cur.body)
-            self.cur = None
-            self.rebuild_log()
+        if self.reasoning_active:
+            self.transcript.append("".join(self.reasoning_buffer))
+            self.reasoning_active = False
+            self.reasoning_buffer = []
+            self.log_widget().write(Text(""))
 
     def append_block(self, block):
         self.history.append(block)
@@ -198,7 +178,7 @@ class SadhanApp(App):
             self.transcript.append(f"exit={block.rc}\n{block.body}")
         elif block.kind == "action":
             self.transcript.append(f"$ {block.body}")
-        else:
+        elif block.kind != "line":
             self.transcript.append(block.body)
         for r in block.render():
             self.log_widget().write(r)
@@ -214,26 +194,15 @@ class SadhanApp(App):
             if block.id == id:
                 block.collapsed = not block.collapsed
                 self.rebuild_log()
-                self.refresh_status()
                 return
 
-    def copy_content(self, content, label):
-        if not content:
-            self.write_styled(f"no {label} to copy", "yellow")
-            return
-        try:
-            self.copy_to_clipboard(content)
-        except Exception as e:
-            self.write_styled(f"copy failed: {e}", "red")
-            return
-        n = len(content.splitlines())
-        self.write_styled(f"copied {label} ({n} lines)", "bold green")
-
     def action_copy_transcript(self):
-        self.copy_content("\n".join(self.transcript).strip("\n"), "log")
-
-    def action_copy_output(self):
-        self.copy_content(self.last_output.rstrip("\n"), "last output")
+        content = "\n".join(self.transcript).strip("\n")
+        if not content:
+            self.write_line("nothing to copy", "yellow")
+            return
+        self.copy_to_clipboard(content)
+        self.write_line(f"copied ({len(content.splitlines())} lines)", "bold green")
 
     def handle_event(self, event):
         if "_run" in event and event["_run"] != self.run_id:
@@ -250,29 +219,28 @@ class SadhanApp(App):
             output = event["output"].rstrip("\n")
             foldable = collapse_output and len(output.splitlines()) > fold_lines
             self.append_block(Block("result", output, rc=event["returncode"], foldable=foldable, collapsed=foldable))
-            self.last_output = event["output"]
+            self.refresh_status()
+        elif t == "usage":
+            self.tokens += event["tokens"]
             self.refresh_status()
         elif t == "error":
             self.finalize_reasoning()
-            self.write_styled(f"agent error: {event['message']}", "bold red")
+            self.write_line(f"error: {event['message']}", "bold red")
         elif t == "status":
             self.finalize_reasoning()
-            status = event.get("status")
-            if status == "complete":
-                self.write_styled("task complete", "bold green")
-            elif status == "stopped":
-                self.write_styled(f"stopped: {event['reason']}", "bold yellow")
-            elif status == "cancelled":
-                self.write_styled("cancelled", "bold yellow")
+            if event.get("status") == "stopped":
+                self.write_line(f"stopped: {event['reason']}", "bold yellow")
+            elif event.get("status") == "cancelled":
+                self.write_line("cancelled", "bold yellow")
         elif t == "done":
             self.finalize_reasoning()
             self.busy = False
             self.prompt_widget().disabled = False
             self.prompt_widget().focus()
-            self.write_styled("-" * 40, "dim")
+            self.write_line("done", "bold green")
         elif t == "user":
             self.finalize_reasoning()
-            self.write_styled(f"\n> {event['text']}\n", "bold #38bdf8")
+            self.append_block(Block("user", event["text"]))
 
     def start_worker(self, coro_fn):
         self.busy = True
@@ -298,7 +266,7 @@ class SadhanApp(App):
         if not text:
             return
         if self.busy:
-            self.write_styled("a task is still running (esc to cancel)", "yellow")
+            self.write_line("still running, esc to cancel", "yellow")
             return
         if not self.started:
             self.query_one("#banner", Static).remove()
