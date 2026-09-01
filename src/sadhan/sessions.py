@@ -1,6 +1,7 @@
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from .config import cwd
@@ -47,3 +48,35 @@ def load_session(path):
             if line:
                 messages.append(json.loads(line))
     return messages
+
+
+def meta_path(session_path):
+    return session_path.with_suffix(".meta.json")
+
+
+def read_meta(session_path):
+    p = meta_path(session_path)
+    if p.exists():
+        return json.loads(p.read_text())
+    return {"name": None}
+
+
+def write_meta(session_path, name):
+    meta_path(session_path).write_text(json.dumps({"name": name}))
+
+
+def parse_timestamp(session_path):
+    return datetime.strptime(session_path.stem, "%Y%m%d_%H%M%S")
+
+
+def human_timestamp(session_path):
+    dt = parse_timestamp(session_path)
+    return dt.strftime("%b %d, %Y · %I:%M %p")
+
+
+def session_label(session_path):
+    meta = read_meta(session_path)
+    when = human_timestamp(session_path)
+    if meta.get("name"):
+        return f"{meta['name']}  —  {when}"
+    return when

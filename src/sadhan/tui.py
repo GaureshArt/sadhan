@@ -285,6 +285,10 @@ class SadhanApp(App):
         self.run_worker(wrapped(), group="task", exclusive=False)
 
     def on_input_submitted(self, event):
+        
+        if event.input.id != "prompt":
+            return
+    
         text = event.value.strip()
         self.prompt_widget().clear()
         if not text:
@@ -316,23 +320,62 @@ class SadhanApp(App):
 
 
 
+class RenamePrompt(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, current_name):
+        super().__init__()
+        self.current_name = current_name or ""
+
+    def compose(self):
+        yield Input(value=self.current_name, placeholder="session name…", id="rename_input")
+
+    def on_input_submitted(self, event):
+        event.stop()
+        self.dismiss(event.value.strip())
+
+    def action_cancel(self):
+        self.dismiss(None)
+
 
 
 class SessionPicker(ModalScreen):
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("r", "rename", "Rename"),
+    ]
 
     def __init__(self, paths):
         super().__init__()
         self.paths = paths
 
     def compose(self):
-        yield ListView(*[ListItem(Label(p.stem)) for p in self.paths])
+        yield ListView(*[ListItem(Label(sessions.session_label(p))) for p in self.paths])
+
+    def on_mount(self):
+        self.query_one(ListView).focus()
 
     def on_list_view_selected(self, event):
         self.dismiss(self.paths[event.list_view.index])
 
     def action_cancel(self):
         self.dismiss(None)
+
+    def action_rename(self):
+        lv = self.query_one(ListView)
+        idx = lv.index
+        if idx is None:
+            return
+        path = self.paths[idx]
+        current = sessions.read_meta(path).get("name")
+
+        def apply_rename(new_name):
+            if new_name:
+                sessions.write_meta(path, new_name)
+                lv.children[idx].query_one(Label).update(sessions.session_label(path))
+
+        self.app.push_screen(RenamePrompt(current), apply_rename)
+
 def main():
     SadhanApp().run()
 
