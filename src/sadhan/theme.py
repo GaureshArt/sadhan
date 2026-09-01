@@ -23,6 +23,26 @@ OUT_FG = "#111111"
 def banner():
     art = pyfiglet.figlet_format("sadhan", font="block").splitlines()
     text = Text(justify="center")
+
+    start = (249, 115, 22)    
+    end = (250, 204, 21)      
+
+    max_width = max(len(line) for line in art)
+
     for line in art:
-        text.append(line + "\n", style=f"bold {USER}")
+        for i, char in enumerate(line):
+            if char == " ":
+                text.append(" ")
+                continue 
+
+            t = i / max_width
+
+            r = int(start[0] + (end[0] - start[0]) * t)
+            g = int(start[1] + (end[1] - start[1]) * t)
+            b = int(start[2] + (end[2] - start[2]) * t)
+
+            text.append(char, style=f"bold #{r:02x}{g:02x}{b:02x}")
+
+        text.append("\n")
+
     return text
