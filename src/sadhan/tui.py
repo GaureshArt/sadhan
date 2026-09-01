@@ -10,7 +10,9 @@ from .bash import run_bash_command
 from .config import collapse_output, fold_lines, model
 from .state import init_state
 from . import theme
-
+from . import sessions
+from textual.screen import ModalScreen
+from textual.widgets import ListView, ListItem, Label
 uid_counter = 0
 
 
@@ -98,10 +100,11 @@ class SadhanApp(App):
     """
 
     BINDINGS = [
-        ("ctrl+b", "toggle_mode", "Switch mode"),
-        ("escape", "cancel_task", "Cancel"),
-        ("ctrl+q", "quit", "Quit"),
-        ("ctrl+y", "copy_transcript", "Copy log"),
+    ("ctrl+b", "toggle_mode", "Switch mode"),
+    ("ctrl+s", "browse_sessions", "Sessions"),
+    ("escape", "cancel_task", "Cancel"),
+    ("ctrl+q", "quit", "Quit"),
+    ("ctrl+y", "copy_transcript", "Copy log"),
     ]
 
     def __init__(self):
@@ -117,7 +120,28 @@ class SadhanApp(App):
         self.history = []
         self.reasoning_active = False
         self.reasoning_buffer = []
+    def action_browse_sessions(self):
+        paths = sessions.list_sessions()
+        if not paths:
+            self.write_line("no sessions in this directory yet", "yellow")
+            return
+        self.push_screen(SessionPicker(paths), self.load_session)
 
+    def load_session(self, path):
+        if path is None:
+            return
+        messages = sessions.load_session(path)
+        self.state = init_state(messages=messages)
+        self.state["session_path"] = path
+        self.steps = 0
+        self.tokens = 0
+        self.history = []
+        self.transcript = []
+        self.log_widget().clear()
+        if not self.started:
+            self.query_one("#banner", Static).remove()
+            self.started = True
+        self.write_line(f"resumed {path.stem} ({len(messages)} messages)", "bold green")
     def compose(self) -> ComposeResult:
         yield Static(theme.banner(), id="banner")
         yield Log(id="log", highlight=True, wrap=True)
@@ -276,6 +300,7 @@ class SadhanApp(App):
         if self.mode == "build":
             if self.state is None:
                 self.state = init_state()
+                self.state["session_path"] = sessions.new_session_path()
 
             async def run(emit):
                 await agent(text, emit=emit, state=self.state)
@@ -289,6 +314,25 @@ class SadhanApp(App):
             self.start_worker(run)
 
 
+
+
+
+
+class SessionPicker(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, paths):
+        super().__init__()
+        self.paths = paths
+
+    def compose(self):
+        yield ListView(*[ListItem(Label(p.stem)) for p in self.paths])
+
+    def on_list_view_selected(self, event):
+        self.dismiss(self.paths[event.list_view.index])
+
+    def action_cancel(self):
+        self.dismiss(None)
 def main():
     SadhanApp().run()
 

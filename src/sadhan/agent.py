@@ -4,7 +4,7 @@ from .state import add_message, init_state
 from .bash import run_bash_command
 from .prompt import system_prompt
 from .llm_call import llm_call
-
+from .sessions import flush_session
 
 def print_event(event):
     t = event['type']
@@ -27,10 +27,11 @@ def print_event(event):
 
 async def step(state, emit):
     response = await llm_call(state, emit)
-    if response['action'] != 'echo TASK_COMPLETE':
+    if response['action'] != 'echo "TASK_COMPLETE"':
         action_response = await run_bash_command(response['action'])
         emit({'type': 'result', 'returncode': action_response['returncode'], 'output': action_response['output']})
         add_message(state, role='user', content=f"Bash Result \n returncode:{action_response['returncode']} \n output:{action_response['output']}")
+    flush_session(state)
     return response
 
 
@@ -44,6 +45,7 @@ async def agent(task, emit=print_event, state=None):
     if not any(m['role'] == 'system' for m in state['messages']):
         add_message(state, role='system', content=system_prompt)
     add_message(state, role='user', content=task)
+    flush_session(state)
 
     try:
         while True:
@@ -62,6 +64,7 @@ async def agent(task, emit=print_event, state=None):
                 state['n_errors'] += 1
                 emit({'type': 'error', 'message': str(e)})
                 add_message(state, role='user', content=f"Agent error : {e}")
+                flush_session(state)
             finally:
                 state['n_calls'] += 1
     except asyncio.CancelledError:
