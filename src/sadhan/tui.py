@@ -4,7 +4,7 @@ import os
 from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, RichLog, Select, Static
 
@@ -48,14 +48,25 @@ class Block:
 
     def render(self):
         if self.kind == "user":
-            return [Text(f"> {self.body}", f"bold {theme.USER}")]
+            t = Text.assemble(
+                ("❯ ", f"bold {theme.ACCENT}"),
+                (self.body, f"bold {theme.USER}"),
+            )
+            return [t]
 
         if self.kind == "action":
-            head = f"$ {self.body.splitlines()[0]}" + (" …" if self.n_lines() > 1 else "")
+            head = f"{self.body.splitlines()[0]}" + (" …" if self.n_lines() > 1 else "")
+            t = Text.assemble(
+                ("$ ", f"bold {theme.ACTION}"),
+                (head, f"{theme.ACTION_FG} {theme.ACTION_BG}"),
+            )
             if self.collapsed:
-                return [fold_mark(Text(head, f"{theme.ACTION_FG} {theme.ACTION_BG}"), self.id)]
+                return [fold_mark(t, self.id)]
             return [
-                fold_mark(Text(f"$ {self.body}", f"{theme.ACTION_FG} {theme.ACTION_BG}"), self.id),
+                fold_mark(Text.assemble(
+                    ("$ ", f"bold {theme.ACTION}"),
+                    (self.body, f"{theme.ACTION_FG} {theme.ACTION_BG}"),
+                ), self.id),
             ]
 
         if self.kind == "result":
@@ -74,46 +85,77 @@ class Block:
 
 
 MODES = {
-    "build": {"border": theme.BORDER_FOCUS, "placeholder": "describe a task…  ctrl+b for bash", "label": "build"},
-    "bash": {"border": theme.ACTION, "placeholder": "$ shell command  ctrl+b for build", "label": "bash"},
+    "build": {"border": theme.BORDER_FOCUS, "placeholder": "describe a task…", "label": "build", "hint": "ctrl+b bash"},
+    "bash": {"border": theme.ACTION, "placeholder": "$ shell command", "label": "bash", "hint": "ctrl+b build"},
 }
 
 
 class SadhanApp(App):
     TITLE = "sadhan"
+    SUB_TITLE = "ai harness"
     AUTO_FOCUS = "#prompt"
+    ENABLE_COMMAND_PALETTE = False
 
     CSS = f"""
     Screen {{ background: {theme.BG}; }}
-    #banner {{ height: auto; padding: 1 0 0 0; }}
-    #log {{
+
+    #header {{
+        height: 2;
+        margin: 0 1 0 1;
+        padding: 0 1;
+        border-bottom: solid {theme.BORDER};
+    }}
+    #brand {{ width: auto; padding: 0 1 0 0; color: {theme.ACCENT}; text-style: bold; }}
+    #ver {{ width: auto; padding: 0 2 0 2; color: {theme.MUTED}; }}
+    #hf {{ width: 1fr; }}
+    #status {{ width: auto; padding: 0 1 0 1; color: {theme.MUTED}; }}
+    #model-pick {{ width: auto; max-width: 36; }}
+
+    #log-panel {{
         height: 1fr;
-        padding: 1 2 0 2;
         margin: 1 1 0 1;
+        border: round {theme.BORDER};
+        background: {theme.PANEL};
     }}
-    #statusbar {{
-        height: 1;
-        padding: 0 2;
-        align-vertical: middle;
+    #log-panel #log {{
+        height: 100%;
+        padding: 0 1;
+        background: {theme.PANEL};
     }}
-    #model-label {{
+
+    #input-bar {{
+        height: 3;
+        margin: 1 1 1 1;
+    }}
+    #pg {{
         width: auto;
         padding: 0 1 0 0;
-        color: {theme.DIM};
-    }}
-    #model-pick {{
-        width: auto;
-        max-width: 46;
-    }}
-    #status {{
-        width: 1fr;
-        text-align: right;
-        color: {theme.DIM};
+        text-style: bold;
+        color: {theme.ACCENT};
     }}
     #prompt {{
-        margin: 1 1 1 1;
-        border: round {theme.BORDER};
+        height: 3;
+        width: 1fr;
+        border: round {theme.BORDER_FOCUS};
+        background: {theme.PANEL_HI};
+        color: {theme.FG};
     }}
+    #prompt:disabled {{
+        border: round {theme.BORDER};
+        color: {theme.MUTED};
+        background: {theme.PANEL};
+    }}
+    #input-bar.build #pg {{ color: {theme.ACCENT}; }}
+    #input-bar.bash #pg {{ color: {theme.CYAN}; }}
+    #input-bar.build #prompt {{ border: round {theme.ACCENT}; }}
+    #input-bar.bash #prompt {{ border: round {theme.CYAN}; }}
+    #hint {{
+        width: auto;
+        padding: 0 1 0 1;
+        color: {theme.MUTED};
+    }}
+
+    Footer {{ background: {theme.PANEL}; }}
     """
 
     BINDINGS = [
@@ -127,22 +169,36 @@ class SadhanApp(App):
 
     def __init__(self):
         super().__init__()
+        self.register_theme(theme.THEME)
+        self.theme = theme.THEME.name
         self.mode = "build"
         self.steps = 0
         self.tokens = 0
         self.busy = False
-        self.started = False
         self.run_id = 0
         self.state = None
         self.transcript = []
         self.history = []
         self.reasoning_active = False
         self.reasoning_buffer = []
+        self.reasoning_accum = []
         self._model_ui_busy = False
+        self._spin = 0
+        self._spin_frames = "◐◓◑◒"
+
+    def on_mount(self):
+        self.apply_mode_style()
+        self.set_interval(0.18, self._tick_spin)
+
+    def _tick_spin(self):
+        if self.busy:
+            self._spin = (self._spin + 1) % len(self._spin_frames)
+            self.refresh_status()
+
     def action_browse_sessions(self):
         paths = sessions.list_sessions()
         if not paths:
-            self.write_line("no sessions in this directory yet", "yellow")
+            self.write_line("no sessions in this directory yet", f"bold {theme.WARN}")
             return
         self.push_screen(SessionPicker(paths), self.load_session)
 
@@ -157,15 +213,14 @@ class SadhanApp(App):
         self.history = []
         self.transcript = []
         self.log_widget().clear()
-        if not self.started:
-            self.query_one("#banner", Static).remove()
-            self.started = True
-        self.write_line(f"resumed {path.stem} ({len(messages)} messages)", "bold green")
+        self.write_line(f"resumed {path.stem} ({len(messages)} messages)", f"bold {theme.OK}")
+
     def compose(self) -> ComposeResult:
-        yield Static(theme.banner(), id="banner")
-        yield Log(id="log", highlight=True, wrap=True)
         yield Horizontal(
-            Static("model", id="model-label"),
+            Static("❖ sadhan", id="brand"),
+            Static("ai harness", id="ver"),
+            Static("", id="hf"),
+            Static(self.status_line(), id="status"),
             Select(
                 registry.options(),
                 id="model-pick",
@@ -174,10 +229,18 @@ class SadhanApp(App):
                 prompt="select a model",
                 compact=True,
             ),
-            Static(self.status_line(), id="status"),
-            id="statusbar",
+            id="header",
         )
-        yield Input(placeholder=MODES["build"]["placeholder"], id="prompt")
+        yield Vertical(
+            Log(id="log", highlight=True, wrap=True),
+            id="log-panel",
+        )
+        yield Horizontal(
+            Static("❯", id="pg"),
+            Static(MODES["build"]["hint"], id="hint"),
+            Input(placeholder=MODES["build"]["placeholder"], id="prompt"),
+            id="input-bar",
+        )
         yield Footer()
 
     def log_widget(self):
@@ -186,18 +249,30 @@ class SadhanApp(App):
     def prompt_widget(self):
         return self.query_one("#prompt", Input)
 
+    def _fmt_tokens(self):
+        if self.tokens >= 1000:
+            return f"{self.tokens / 1000:.1f}k"
+        return str(self.tokens)
+
     def status_line(self):
-        m = MODES[self.mode]
-        return f" {m['label']}  ·  {self.steps} steps  ·  {self.tokens} tokens"
+        dot = "●"
+        dot_color = theme.ACCENT if self.mode == "build" else theme.CYAN
+        parts = [
+            Text(f"{dot} {self.mode}  ", style=f"bold {dot_color}"),
+            Text(f"{self.steps} steps  ·  {self._fmt_tokens()} tokens", style=theme.MUTED),
+        ]
+        if self.busy:
+            parts.insert(0, Text(self._spin_frames[self._spin] + "  ", style=f"bold {theme.ACCENT2}"))
+        return Text.assemble(*parts)
 
     def refresh_status(self):
         self.query_one("#status", Static).update(self.status_line())
 
     def apply_mode_style(self):
         m = MODES[self.mode]
-        p = self.prompt_widget()
-        p.placeholder = m["placeholder"]
-        p.styles.border = ("round", m["border"])
+        self.query_one("#input-bar", Horizontal).set_classes(self.mode)
+        self.query_one("#hint", Static).update(m["hint"])
+        self.prompt_widget().placeholder = m["placeholder"]
         self.refresh_status()
 
     def action_toggle_mode(self):
@@ -219,7 +294,7 @@ class SadhanApp(App):
         select.set_options(registry.options())
         select.value = registry.active.name if registry.active else Select.NULL
         self._model_ui_busy = False
-        self.write_line(f"saved {len(keys)} api keys", "bold green")
+        self.write_line(f"saved {len(keys)} api keys", f"bold {theme.OK}")
 
     def on_select_changed(self, event):
         if self._model_ui_busy:
@@ -230,7 +305,7 @@ class SadhanApp(App):
             return
         event.stop()
         registry.set_active(event.value)
-        self.write_line(f"model: {registry.active.display}", "bold cyan")
+        self.write_line(f"model: {registry.active.display}", f"bold {theme.ACCENT2}")
 
     def action_cancel_task(self):
         if self.busy:
@@ -243,16 +318,25 @@ class SadhanApp(App):
         if not self.reasoning_active:
             self.reasoning_active = True
             self.reasoning_buffer = []
-            self.log_widget().write(Text("", style=f"bold {theme.REASON}"))
+            self.reasoning_accum = []
         self.reasoning_buffer.append(text)
-        self.log_widget().write(Text(text, style=theme.REASON))
+        self.reasoning_accum.append(text)
+        joined = "".join(self.reasoning_buffer)
+        if "\n" in joined:
+            parts = joined.split("\n")
+            rest = parts.pop()
+            for line in parts:
+                self.log_widget().write(Text(line, style=f"italic {theme.REASON}"))
+            self.reasoning_buffer = [rest]
 
     def finalize_reasoning(self):
         if self.reasoning_active:
-            self.transcript.append("".join(self.reasoning_buffer))
+            rest = "".join(self.reasoning_buffer)
+            if rest:
+                self.log_widget().write(Text(rest, style=f"italic {theme.REASON}"))
+            self.transcript.append("".join(self.reasoning_accum))
             self.reasoning_active = False
             self.reasoning_buffer = []
-            self.log_widget().write(Text(""))
 
     def append_block(self, block):
         self.history.append(block)
@@ -281,10 +365,10 @@ class SadhanApp(App):
     def action_copy_transcript(self):
         content = "\n".join(self.transcript).strip("\n")
         if not content:
-            self.write_line("nothing to copy", "yellow")
+            self.write_line("nothing to copy", f"bold {theme.WARN}")
             return
         self.copy_to_clipboard(content)
-        self.write_line(f"copied ({len(content.splitlines())} lines)", "bold green")
+        self.write_line(f"copied ({len(content.splitlines())} lines)", f"bold {theme.OK}")
 
     def handle_event(self, event):
         if "_run" in event and event["_run"] != self.run_id:
@@ -307,19 +391,20 @@ class SadhanApp(App):
             self.refresh_status()
         elif t == "error":
             self.finalize_reasoning()
-            self.write_line(f"error: {event['message']}", "bold red")
+            self.write_line(f"error: {event['message']}", f"bold {theme.FAIL}")
         elif t == "status":
             self.finalize_reasoning()
             if event.get("status") == "stopped":
-                self.write_line(f"stopped: {event['reason']}", "bold yellow")
+                self.write_line(f"stopped: {event['reason']}", f"bold {theme.WARN}")
             elif event.get("status") == "cancelled":
-                self.write_line("cancelled", "bold yellow")
+                self.write_line("cancelled", f"bold {theme.WARN}")
         elif t == "done":
             self.finalize_reasoning()
             self.busy = False
             self.prompt_widget().disabled = False
             self.prompt_widget().focus()
-            self.write_line("done", "bold green")
+            self.write_line("done", f"bold {theme.OK}")
+            self.refresh_status()
         elif t == "user":
             self.finalize_reasoning()
             self.append_block(Block("user", event["text"]))
@@ -343,20 +428,15 @@ class SadhanApp(App):
         self.run_worker(wrapped(), group="task", exclusive=False)
 
     def on_input_submitted(self, event):
-        
         if event.input.id != "prompt":
             return
-    
         text = event.value.strip()
         self.prompt_widget().clear()
         if not text:
             return
         if self.busy:
-            self.write_line("still running, esc to cancel", "yellow")
+            self.write_line("still running, esc to cancel", f"bold {theme.WARN}")
             return
-        if not self.started:
-            self.query_one("#banner", Static).remove()
-            self.started = True
         self.handle_event({"type": "user", "text": text})
 
         if self.mode == "build":

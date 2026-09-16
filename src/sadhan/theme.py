@@ -1,48 +1,46 @@
-import pyfiglet
-from rich.text import Text
+from textual.theme import Theme
 
-BG = "#0c0d12"
-BORDER = "#23252f"
-BORDER_FOCUS = "#38bdf8"
+BG = "#1a1b26"
+PANEL = "#16161e"
+PANEL_HI = "#1f2335"
 
-USER = "#f5f5f5"
-REASON = "#c9915a"
+ACCENT = "#7aa2f7"
+ACCENT2 = "#bb9af7"
+CYAN = "#7dcfff"
 
-ACTION = "#f0abfc"        
-ACTION_BG = "on #17181d"
-ACTION_FG = "#e5e5e0"
+FG = "#c0caf5"
+FG_DIM = "#a9b1d6"
+MUTED = "#565f89"
 
-OK = "#4ade80"
-FAIL = "#f87171"
-DIM = "#4b5563"
+OK = "#9ece6a"
+FAIL = "#f7768e"
+WARN = "#e0af68"
 
-OUT_BG = "on #f4f4ef"
-OUT_FG = "#111111"
+BORDER = "#292e42"
 
+USER = FG
+REASON = FG_DIM
 
-def banner():
-    art = pyfiglet.figlet_format("sadhan", font="block").splitlines()
-    text = Text(justify="center")
+ACTION = ACCENT2
+ACTION_BG = f"on {PANEL_HI}"
+ACTION_FG = FG
 
-    start = (249, 115, 22)    
-    end = (250, 204, 21)      
+OUT_FG = "#c8d3f5"
+OUT_BG = f"on #20242f"
 
-    max_width = max(len(line) for line in art)
+BORDER_FOCUS = ACCENT
 
-    for line in art:
-        for i, char in enumerate(line):
-            if char == " ":
-                text.append(" ")
-                continue 
-
-            t = i / max_width
-
-            r = int(start[0] + (end[0] - start[0]) * t)
-            g = int(start[1] + (end[1] - start[1]) * t)
-            b = int(start[2] + (end[2] - start[2]) * t)
-
-            text.append(char, style=f"bold #{r:02x}{g:02x}{b:02x}")
-
-        text.append("\n")
-
-    return text
+THEME = Theme(
+    name="sadhan",
+    primary=ACCENT,
+    secondary=ACCENT2,
+    accent=ACCENT2,
+    warning=WARN,
+    error=FAIL,
+    success=OK,
+    foreground=FG,
+    background=BG,
+    surface=PANEL_HI,
+    panel=PANEL,
+    dark=True,
+)
