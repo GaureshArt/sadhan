@@ -1,20 +1,21 @@
-from ollama import AsyncClient
-from .config import model
+from . import config
+from .llms import registry, discover
+from .llms.client import LiteLLMClient, chunk_text, chunk_usage_tokens
 from .state import add_message
 from .parser import parser
 
-client = AsyncClient()
+client = LiteLLMClient()
 
 TAGS = ('<reasoning>', '</reasoning>', '<action>', '</action>')
 
 
 async def llm_call(state, emit):
-    stream = await client.chat(
-        model=model,
-        messages=state['messages'],
-        think=False,
-        stream=True,
-    )
+    discover(default_model=config.model)
+    model = registry.active
+    if model is None:
+        raise RuntimeError("no model available; is Ollama running or an API key set?")
+
+    stream = client.stream_chat(state['messages'], model=model)
 
     content = []
     pos = 0
@@ -22,7 +23,7 @@ async def llm_call(state, emit):
     mode = 'pre'
     action_parts = []
     holdback = max(len(t) for t in TAGS) - 1
-    last_chunk = None
+    usage = None
 
     def flush_segment(end):
         nonlocal seg_start
@@ -60,17 +61,18 @@ async def llm_call(state, emit):
             pos += 1
 
     async for chunk in stream:
-        last_chunk = chunk
-        delta = chunk['message']['content']
+        chunk_tokens = chunk_usage_tokens(chunk)
+        if chunk_tokens is not None:
+            usage = chunk_tokens
+        delta = chunk_text(chunk)
         if delta:
             content.append(delta)
             process(final=False)
 
     process(final=True)
 
-    if last_chunk is not None:
-        tokens = last_chunk.get('eval_count', 0) + last_chunk.get('prompt_eval_count', 0)
-        emit({'type': 'usage', 'tokens': tokens})
+    if usage is not None:
+        emit({'type': 'usage', 'tokens': usage})
 
     full = ''.join(content)
     add_message(state, role='assistant', content=full)
