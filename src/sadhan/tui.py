@@ -32,7 +32,7 @@ class Log(RichLog):
 
 
 class Block:
-    def __init__(self, kind, body="", rc=None, foldable=False, collapsed=False):
+    def __init__(self, kind, body="", rc=None, foldable=False, collapsed=False, style="dim"):
         global uid_counter
         uid_counter += 1
         self.id = uid_counter
@@ -41,6 +41,7 @@ class Block:
         self.rc = rc
         self.foldable = foldable
         self.collapsed = collapsed
+        self.style = style
 
     def n_lines(self):
         return len(self.body.splitlines())
@@ -69,7 +70,7 @@ class Block:
                 Text(self.body, f"{theme.OUT_FG} {theme.OUT_BG}"),
             ]
 
-        return [Text(self.body, "dim")]
+        return [Text(self.body, self.style)]
 
 
 MODES = {
@@ -236,8 +237,7 @@ class SadhanApp(App):
             self.workers.cancel_group(self, "task")
 
     def write_line(self, text, style="dim"):
-        self.append_block(Block("line", text))
-        self.log_widget().write(Text(text, style=style))
+        self.append_block(Block("line", text, style=style))
 
     def stream_reasoning(self, text):
         if not self.reasoning_active:
@@ -334,7 +334,7 @@ class SadhanApp(App):
             try:
                 await coro_fn(lambda e: self.handle_event({**e, "_run": rid}))
             except asyncio.CancelledError:
-                self.handle_event({"type": "status", "status": "cancelled", "_run": rid})
+                pass
             except Exception as e:
                 self.handle_event({"type": "error", "message": str(e), "_run": rid})
             finally:
