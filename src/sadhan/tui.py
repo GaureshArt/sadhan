@@ -1,18 +1,20 @@
 import asyncio
+import os
 
 from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Input, RichLog, Static
+from textual.containers import Horizontal, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, RichLog, Select, Static
 
 from .agent import agent
 from .bash import run_bash_command
-from .config import collapse_output, fold_lines, model
+from .config import collapse_output, fold_lines
+from .llms import PROVIDER_ENV, discover, registry, save_keys
 from .state import init_state
 from . import theme
 from . import sessions
-from textual.screen import ModalScreen
-from textual.widgets import ListView, ListItem, Label
 uid_counter = 0
 
 
@@ -88,9 +90,23 @@ class SadhanApp(App):
         padding: 1 2 0 2;
         margin: 1 1 0 1;
     }}
-    #status {{
+    #statusbar {{
         height: 1;
         padding: 0 2;
+        align-vertical: middle;
+    }}
+    #model-label {{
+        width: auto;
+        padding: 0 1 0 0;
+        color: {theme.DIM};
+    }}
+    #model-pick {{
+        width: auto;
+        max-width: 46;
+    }}
+    #status {{
+        width: 1fr;
+        text-align: right;
         color: {theme.DIM};
     }}
     #prompt {{
@@ -101,6 +117,7 @@ class SadhanApp(App):
 
     BINDINGS = [
     ("ctrl+b", "toggle_mode", "Switch mode"),
+    ("ctrl+o", "open_keys", "Keys"),
     ("ctrl+s", "browse_sessions", "Sessions"),
     ("escape", "cancel_task", "Cancel"),
     ("ctrl+q", "quit", "Quit"),
@@ -120,6 +137,7 @@ class SadhanApp(App):
         self.history = []
         self.reasoning_active = False
         self.reasoning_buffer = []
+        self._model_ui_busy = False
     def action_browse_sessions(self):
         paths = sessions.list_sessions()
         if not paths:
@@ -145,7 +163,19 @@ class SadhanApp(App):
     def compose(self) -> ComposeResult:
         yield Static(theme.banner(), id="banner")
         yield Log(id="log", highlight=True, wrap=True)
-        yield Static(self.status_line(), id="status")
+        yield Horizontal(
+            Static("model", id="model-label"),
+            Select(
+                registry.options(),
+                id="model-pick",
+                allow_blank=len(registry) == 0,
+                value=registry.active.name if registry.active else Select.NULL,
+                prompt="select a model",
+                compact=True,
+            ),
+            Static(self.status_line(), id="status"),
+            id="statusbar",
+        )
         yield Input(placeholder=MODES["build"]["placeholder"], id="prompt")
         yield Footer()
 
@@ -157,7 +187,7 @@ class SadhanApp(App):
 
     def status_line(self):
         m = MODES[self.mode]
-        return f" {m['label']}  ·  {model}  ·  {self.steps} steps  ·  {self.tokens} tokens"
+        return f" {m['label']}  ·  {self.steps} steps  ·  {self.tokens} tokens"
 
     def refresh_status(self):
         self.query_one("#status", Static).update(self.status_line())
@@ -172,6 +202,34 @@ class SadhanApp(App):
     def action_toggle_mode(self):
         self.mode = "bash" if self.mode == "build" else "build"
         self.apply_mode_style()
+
+    def action_open_keys(self):
+        self.push_screen(KeyModal(list(PROVIDER_ENV.items())), self.apply_keys)
+
+    def apply_keys(self, keys):
+        if not keys:
+            return
+        save_keys(keys)
+        for var, value in keys.items():
+            os.environ[var] = value
+        discover(force=True)
+        select = self.query_one("#model-pick", Select)
+        self._model_ui_busy = True
+        select.set_options(registry.options())
+        select.value = registry.active.name if registry.active else Select.NULL
+        self._model_ui_busy = False
+        self.write_line(f"saved {len(keys)} api keys", "bold green")
+
+    def on_select_changed(self, event):
+        if self._model_ui_busy:
+            return
+        if event.select.id != "model-pick" or event.value is Select.NULL:
+            return
+        if event.value == (registry.active.name if registry.active else None):
+            return
+        event.stop()
+        registry.set_active(event.value)
+        self.write_line(f"model: {registry.active.display}", "bold cyan")
 
     def action_cancel_task(self):
         if self.busy:
@@ -338,6 +396,44 @@ class RenamePrompt(ModalScreen):
         self.dismiss(None)
 
 
+class KeyModal(ModalScreen):
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    DEFAULT_CSS = """
+    #key-title { height: auto; padding: 1 2; text-style: bold; }
+    #key-scroll { width: 60%; height: 80%; border: round $border; margin: 1 5; padding: 1 2; }
+    .key-provider { color: $text; text-style: bold; padding-top: 1; }
+    .key-var { color: $text-muted; }
+    #key-save { margin: 1 2; width: 16; }
+    """
+
+    def __init__(self, providers):
+        super().__init__()
+        self.providers = providers
+
+    def compose(self):
+        yield Static("API keys", id="key-title")
+        with VerticalScroll(id="key-scroll"):
+            for name, var in self.providers:
+                yield Static(f"{name}", classes="key-provider")
+                yield Static(f"[dim]{var}[/dim]", classes="key-var")
+                yield Input(placeholder=var, password=True, id=var)
+            yield Button("Save", id="key-save")
+
+    def on_button_pressed(self, event):
+        if event.button.id != "key-save":
+            return
+        keys = {}
+        for _name, var in self.providers:
+            value = self.query_one(f"#{var}", Input).value.strip()
+            if value:
+                keys[var] = value
+        self.dismiss(keys)
+
+    def action_cancel(self):
+        self.dismiss(None)
+
+
 
 class SessionPicker(ModalScreen):
     BINDINGS = [
@@ -377,6 +473,10 @@ class SessionPicker(ModalScreen):
         self.app.push_screen(RenamePrompt(current), apply_rename)
 
 def main():
+    from .llms import discover
+    from .config import model as default_model
+
+    discover(default_model=default_model, force=True)
     SadhanApp().run()
 
 
