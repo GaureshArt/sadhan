@@ -376,6 +376,9 @@ class SadhanApp(App):
         t = event["type"]
         if t == "reasoning_token":
             self.stream_reasoning(event["text"])
+        elif t == "reason":
+            self.finalize_reasoning()
+            self.write_line(f"✦ {event['text']}", f"italic {theme.REASON}")
         elif t == "action":
             self.finalize_reasoning()
             self.append_block(Block("action", event["command"], foldable=True, collapsed=False))
@@ -408,6 +411,9 @@ class SadhanApp(App):
         elif t == "user":
             self.finalize_reasoning()
             self.append_block(Block("user", event["text"]))
+        elif t == "answer":
+            self.finalize_reasoning()
+            self.write_line(event["text"], f"bold {theme.OK}")
 
     def start_worker(self, coro_fn):
         self.busy = True
