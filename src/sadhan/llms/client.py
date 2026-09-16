@@ -112,9 +112,12 @@ class LiteLLMClient:
         *,
         model: str | Model | None = None,
         provider: str | None = None,
+        tools: list[dict] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         params = self._params(messages, model, provider, True, kwargs)
+        if tools:
+            params["tools"] = tools
         response = await litellm.acompletion(**params)
         async for chunk in response:
             yield chunk
@@ -125,8 +128,11 @@ class LiteLLMClient:
         *,
         model: str | Model | None = None,
         provider: str | None = None,
+        tools: list[dict] | None = None,
         **kwargs: Any,
     ) -> str:
         params = self._params(messages, model, provider, False, kwargs)
+        if tools:
+            params["tools"] = tools
         response = await litellm.acompletion(**params)
         return response.choices[0].message.content or ""

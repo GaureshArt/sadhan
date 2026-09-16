@@ -13,5 +13,7 @@ def init_state(messages=None):
         "session_path": None,
     }
 
-def add_message(state, role, content):
-    state["messages"].append({"role": role, "content": content})
+def add_message(state, role, content, **extra):
+    message = {"role": role, "content": content}
+    message.update(extra)
+    state["messages"].append(message)
