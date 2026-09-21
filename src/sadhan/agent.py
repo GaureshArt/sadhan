@@ -81,7 +81,7 @@ async def agent(task, emit=print_event, state=None):
         state['n_errors'] = 0
 
     if not any(m['role'] == 'system' for m in state['messages']):
-        add_message(state, role='system', content=system_prompt)
+        add_message(state, role='system', content=system_prompt())
     add_message(state, role='user', content=task)
     flush_session(state)
 

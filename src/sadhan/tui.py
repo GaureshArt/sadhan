@@ -559,6 +559,18 @@ class SessionPicker(ModalScreen):
         self.app.push_screen(RenamePrompt(current), apply_rename)
 
 def main():
+    import sys
+
+    from . import config
+
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if args:
+        try:
+            config.cwd = config.resolve_workdir(args[0])
+        except ValueError as e:
+            print(f"sadhan-tui: error: {e}", file=sys.stderr)
+            sys.exit(1)
+
     from .llms import discover
     from .config import model as default_model
 

@@ -114,6 +114,42 @@ def _strip_inline_calls(text: str, ranges: list[tuple[int, int]]) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
+def _json_probe(text: str, start: int) -> int:
+    if text[start] != "{":
+        return 0
+    i = start + 1
+    while i < len(text) and text[i] in " \t\r\n":
+        i += 1
+    if i >= len(text):
+        return -1
+    return 1 if text[i] == '"' else 0
+
+
+def _strip_json_objects(text: str) -> str:
+    if "{" not in text:
+        return text
+    decoder = json.JSONDecoder()
+    out = []
+    i = 0
+    while i < len(text):
+        j = text.find("{", i)
+        if j < 0:
+            out.append(text[i:])
+            break
+        out.append(text[i:j])
+        if _json_probe(text, j) == 0:
+            out.append(text[j])
+            i = j + 1
+            continue
+        try:
+            _, end = decoder.raw_decode(text, j)
+            i = end
+        except json.JSONDecodeError:
+            out.append(text[j])
+            i = j + 1
+    return "".join(out)
+
+
 def _unwrap_text_wrapper(text: str) -> str:
     stripped = (text or "").strip()
     if not (stripped.startswith("{") and stripped.endswith("}")):
@@ -122,12 +158,30 @@ def _unwrap_text_wrapper(text: str) -> str:
         obj = json.loads(stripped)
     except json.JSONDecodeError:
         return text
-    arguments = obj.get("arguments")
-    if isinstance(obj, dict) and isinstance(obj.get("name"), str) and isinstance(arguments, dict):
-        for value in arguments.values():
-            if isinstance(value, str):
-                return value.strip()
-    return text
+    if not isinstance(obj, dict):
+        return text
+    name = obj.get("name")
+    if isinstance(name, str):
+        if name in _TOOL_NAMES:
+            return ""
+        arguments = obj.get("arguments")
+        if isinstance(arguments, dict):
+            for value in arguments.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        if isinstance(arguments, str) and arguments.strip():
+            return arguments.strip()
+        return ""
+    for key in ("answer", "result", "output", "message", "response", "text", "content", "reply"):
+        value = obj.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            for inner in ("text", "message", "content", "answer", "output"):
+                inner_value = value.get(inner)
+                if isinstance(inner_value, str) and inner_value.strip():
+                    return inner_value.strip()
+    return ""
 
 
 def _short(text: str, limit: int = 120) -> str:
@@ -153,53 +207,55 @@ def _reason_from_arguments(arguments: str) -> str:
 
 
 class _ReasonStream:
-    """Streams model text live, hiding inline tool-call JSON from the display."""
-
     def __init__(self, emit):
         self._emit = emit
         self._buf = ""
+        self._decoder = json.JSONDecoder()
 
     @staticmethod
     def _clean(text: str) -> str:
-        return text.replace("<tool_call>", " ").replace("</tool_call>", " ")
+        return text.replace("<tool_call>", "").replace("</tool_call>", "")
 
     def feed(self, text: str) -> None:
         self._buf += text
-        self._process()
+        self._process(streaming=True)
 
     def flush(self) -> None:
-        self._process()
+        self._process(streaming=False)
 
-    def _process(self) -> None:
-        marker = self._buf.find('{"name"')
-        if marker < 0:
-            self._flush_all()
-            return
-        pre = self._buf[:marker]
-        try:
-            obj, end = json.JSONDecoder().raw_decode(self._buf, marker)
-            complete = True
-        except json.JSONDecodeError:
-            complete = False
-        if complete:
-            name = obj.get("name") if isinstance(obj, dict) else None
-            arguments = obj.get("arguments") if isinstance(obj, dict) else None
-            if isinstance(name, str) and name in _TOOL_NAMES and isinstance(arguments, (dict, str)):
-                if pre.strip():
-                    self._emit({"type": "reasoning_token", "text": self._clean(pre)})
-                self._buf = self._buf[end:]
-                self._process()
+    def _process(self, streaming: bool) -> None:
+        buf = self._buf
+        parts = []
+        i = 0
+        while i < len(buf):
+            j = buf.find("{", i)
+            if j < 0:
+                parts.append(buf[i:])
+                break
+            parts.append(buf[i:j])
+            probe = _json_probe(buf, j)
+            if probe == 0:
+                parts.append(buf[j])
+                i = j + 1
+                continue
+            try:
+                _, end = self._decoder.raw_decode(buf, j)
+                i = end
+            except json.JSONDecodeError:
+                if streaming or probe == -1:
+                    self._emit_all(parts)
+                    self._buf = buf[j:]
+                    return
+                self._emit_all(parts)
+                self._buf = ""
                 return
-            self._flush_all()
-            return
-        if pre.strip():
-            self._emit({"type": "reasoning_token", "text": self._clean(pre)})
-        self._buf = self._buf[marker:]
-
-    def _flush_all(self) -> None:
-        if self._buf.strip():
-            self._emit({"type": "reasoning_token", "text": self._clean(self._buf)})
+        self._emit_all(parts)
         self._buf = ""
+
+    def _emit_all(self, parts) -> None:
+        text = self._clean("".join(parts))
+        if text:
+            self._emit({"type": "reasoning_token", "text": text})
 
 
 async def llm_call(state, emit, tools=None):
@@ -252,12 +308,12 @@ async def llm_call(state, emit, tools=None):
             seen.add(key)
             tool_calls.append({"id": f"call_{len(tool_calls)}", "name": call["name"], "arguments": call["arguments"]})
 
-    fallback = _last_line(prose_text) or _last_line(thought_text)
+    fallback = _last_line(_strip_json_objects(prose_text)) or _last_line(_strip_json_objects(thought_text))
     for call in tool_calls:
         if call["name"] in _TOOL_NAMES:
             call["reason"] = _reason_from_arguments(call["arguments"]) or fallback
 
-    text = _unwrap_text_wrapper(prose_text.strip())
+    text = _strip_json_objects(_unwrap_text_wrapper(prose_text.strip()))
 
     if not tool_calls and not text.strip():
         raise LlmError("model returned an empty response with no tool call")

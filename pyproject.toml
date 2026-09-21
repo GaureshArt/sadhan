@@ -1,20 +1,37 @@
 [project]
 name = "sadhan"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.0a1"
+description = "A self-contained AI agent harness: any LiteLLM model drives real bash tool calls in a persistent shell, with a terminal UI"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
 authors = [
     { name = "Gauresh Tambe", email = "gaureshtambe25@gmail.com" }
 ]
-requires-python = ">=3.12"
+keywords = ["ai", "agent", "llm", "ollama", "cli", "tui", "bash"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Terminals :: Terminal Emulators/X Terminals",
+]
 dependencies = [
+    "litellm",
     "ollama>=0.6.2",
-    "pyfiglet>=1.0.4",
     "textual>=8.2.8",
 ]
 
+[project.urls]
+Homepage = "https://blog.gauresh.art/demystifying-ai-harnesses"
+Source = "https://github.com/GaureshArt/sadhan"
+
 [project.scripts]
-sadhan = "sadhan:main"
+sadhan = "sadhan.tui:main"
 sadhan-tui = "sadhan.tui:main"
 
 [build-system]

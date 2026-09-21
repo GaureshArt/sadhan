@@ -1,4 +1,5 @@
-from .config import step_limit, max_errors, cwd
+from .config import step_limit, max_errors
+from . import config
 
 def init_state(messages=None):
     messages = messages or []
@@ -8,7 +9,7 @@ def init_state(messages=None):
         "step_limit": step_limit,
         "n_errors": 0,
         "max_errors": max_errors,
-        "cwd": cwd,
+        "cwd": config.cwd,
         "n_saved": len(messages),
         "session_path": None,
     }

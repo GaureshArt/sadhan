@@ -5,7 +5,8 @@ import signal
 import time
 from uuid import uuid4
 
-from .config import blocked_patterns, cwd, max_output_bytes, timeout
+from .config import blocked_patterns, max_output_bytes, timeout
+from . import config
 
 shell = None
 
@@ -41,7 +42,7 @@ def killpg(proc):
 async def spawn():
     return await asyncio.create_subprocess_exec(
         "bash",
-        cwd=cwd,
+        cwd=config.cwd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

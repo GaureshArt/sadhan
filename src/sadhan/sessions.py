@@ -4,13 +4,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .config import cwd
+from . import config
 
 SESSIONS_ROOT = Path.home() / ".sadhan" / "sessions"
 
 
 def dir_slug():
-    return re.sub(r"[^A-Za-z0-9]+", "_", str(Path(cwd).resolve())).strip("_")
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(Path(config.cwd).resolve())).strip("_")
 
 
 def session_dir():
