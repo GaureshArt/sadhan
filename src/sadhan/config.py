@@ -1,21 +1,12 @@
 import os
-
-def resolve_workdir(arg=None):
-    if arg:
-        path = os.path.abspath(os.path.expanduser(arg))
-        if not os.path.isdir(path):
-            raise ValueError(f"{arg!r} is not a directory")
-        return path
-    return os.getcwd()
-
-
 model = 'qwen3.5:4b'
 step_limit = 30
 max_errors = 4
-cwd = os.getcwd()
+cwd = r"some path"
 timeout = 60
 max_output_bytes = 100_000
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
+
 fold_lines = 8
 collapse_output = True
 
