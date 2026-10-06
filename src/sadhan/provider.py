@@ -11,12 +11,12 @@ logger = getLogger(__name__)
 
 
 class Provider:
-    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str) -> Message:
+    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None) -> Message:
         raise NotImplementedError
 
 
 class LiteLLMProvider(Provider):
-    def __init__(self, model, api_base) -> None:
+    def __init__(self, model: str, api_base: str | None = None) -> None:
         self.model: str = model
         self.api_base: str | None = api_base or None
 
@@ -38,13 +38,12 @@ class LiteLLMProvider(Provider):
         for block in message.content:
             if isinstance(block, ToolResultBlock):
                 wire.append({"role": "tool", "tool_call_id": block.tool_use_id, "content": block.content})
-        for block in message.content:
-            if isinstance(block, TextBlock):
-                wire.append({"role": "user", "content": block.text})
+        if message.text:
+            wire.append({"role": "user", "content": message.text})
 
         return wire
 
-    def _to_wire(self, system_prompt: str | None, messages: list[Message]) -> list[dict]:
+    def _to_wire(self, messages: list[Message], system_prompt: str | None) -> list[dict]:
         wire: list[dict] = []
         if system_prompt:
             wire.append({"role": "system", "content": system_prompt})
@@ -83,7 +82,7 @@ class LiteLLMProvider(Provider):
     async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None) -> Message:
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": self._to_wire(messages, system_prompt),
+            "messages": self._to_wire(messages=messages, system_prompt=system_prompt),
         }
         if self.api_base:
             kwargs["api_base"] = self.api_base
