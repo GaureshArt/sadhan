@@ -1,17 +1,20 @@
+from collections.abc import Callable
 import json
 from logging import getLogger
 from typing import Any
 from uuid import uuid4
 
-from litellm import acompletion
+from litellm import acompletion, stream_chunk_builder
 
 from .messages import Block, Message, TextBlock, ToolResultBlock, ToolUseBlock
 
 logger = getLogger(__name__)
 
+TextCallback = Callable[[str],None]
+
 
 class Provider:
-    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None) -> Message:
+    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None,on_text_delta:TextCallback | None = None) -> Message:
         raise NotImplementedError
 
 
@@ -79,14 +82,27 @@ class LiteLLMProvider(Provider):
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None) -> Message:
+    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None,on_text_delta:TextCallback | None = None) -> Message:
+        wire = self._to_wire(messages=messages, system_prompt=system_prompt)
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": self._to_wire(messages=messages, system_prompt=system_prompt),
+            "messages": wire,
+            "stream":True
         }
+        chunks = []
         if self.api_base:
             kwargs["api_base"] = self.api_base
         if tools:
             kwargs["tools"] = tools
-        response = await acompletion(**kwargs)
+        kwargs["reasoning_effort"] = "none"
+        async for chunk in await acompletion(**kwargs):
+            chunks.append(chunk)
+            if on_text_delta and chunk.choices:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    on_text_delta(delta)
+        response = stream_chunk_builder(chunks,messages=wire)
+
+        if response is None:
+            raise RuntimeError("Model returned an empty stream")
         return self._from_response(response)

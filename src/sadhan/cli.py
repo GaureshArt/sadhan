@@ -14,7 +14,7 @@ class CliRenderer:
         self._mid_line = False
     def handle(self, event: Event) -> None:
         if not isinstance(event, TextDelta) and self._mid_line:
-            print()                      
+            print()
             self._mid_line = False
 
         if isinstance(event, TextDelta):
@@ -30,8 +30,8 @@ class CliRenderer:
         elif isinstance(event, StepStarted):
             print(f"Step {event.step} started.")
         elif isinstance(event, RunFinished):
-            if event.message is not None:
-                print(f"Assistant: {event.message.text}")
+            # if event.message is not None:
+            #     print(f"Assistant: {event.message.text}")
             if event.status != "done":
                 print(f"Run {event.status}.")
         elif isinstance(event, ErrorOccurred):
