@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
-from .shell import Shell
 from .base import Tool
+from .shell import PersistentShell
 
 
 class BashParams(BaseModel):
@@ -12,13 +12,11 @@ class BashTool(Tool):
     name = "bash"
     description = (
         "Run a shell command in the project directory and return its output. "
-        "Each call starts a fresh shell, so `cd` and exported variables do not "
-        "carry over: chain commands with && instead. Non-zero exit codes are "
-        "shown after the output."
+        "It is persistant shell. cd and exported variables persist between calls, and that a timeout restarts the shell and loses that state."
     )
     params = BashParams
 
-    def __init__(self, shell: Shell, timeout: float) -> None:
+    def __init__(self, shell: PersistentShell, timeout: float) -> None:
         self.shell = shell
         self.timeout = timeout
 
