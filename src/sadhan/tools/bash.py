@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from ..plugins import PluginHost
 from .base import Tool
 from .shell import PersistentShell
 
@@ -25,3 +26,7 @@ class BashTool(Tool):
         if code != 0:
             output += f"\n[exit code: {code}]"
         return output
+
+    def register(host: PluginHost) -> None:
+        shell = PersistentShell(host.config.working_dir)
+        host.add_tool(BashTool(shell, host.config.command_timeout))
