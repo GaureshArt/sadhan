@@ -7,9 +7,9 @@ from .agent import Agent
 from .cli import CliRenderer
 from .config import Config
 from .event import EventBus
+from .plugins import PluginHost, load_plugins
 from .provider import LiteLLMProvider
 from .tools.bash import BashTool
-from .tools.shell import PersistentShell
 
 MODEL = "ollama_chat/qwen3.5:4b"
 PROMPT = "sadhan> "
@@ -37,18 +37,16 @@ async def repl(agent) -> None:
 async def amain(model: str, api_base: str | None, workdir: Path) -> None:
     config = Config(model=model, api_base=api_base, working_dir=workdir)
     bus = EventBus()
+    host = PluginHost(config=config, bus=bus)
+    BashTool.register(host)
+    load_plugins(Path.home() / ".sadhan" / "plugins", host)
+    load_plugins(workdir / ".sadhan" / "plugins", host)
     bus.subscribe(CliRenderer().handle)
-    shell = PersistentShell(config.working_dir)
-    agent = Agent(
-        LiteLLMProvider(config.model, config.api_base),
-        config,
-        [BashTool(shell, config.command_timeout)],
-        bus,
-    )
+    agent = Agent(provider=LiteLLMProvider(config.model, config.api_base), config=config, tools=host.tools, bus=bus, hooks=host.before_tool_hooks)
     try:
         await repl(agent)
     finally:
-        await shell.close()
+        await host.tools.close()
 
 
 def main() -> None:
@@ -63,5 +61,5 @@ def main() -> None:
         asyncio.run(amain(args.model, args.api_base, args.cwd.resolve()))
 
 
-if __name__ == "__main__":  
+if __name__ == "__main__":
     main()
