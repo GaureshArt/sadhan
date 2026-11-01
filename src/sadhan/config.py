@@ -9,6 +9,8 @@ system_prompt: str = (
     "Never create, modify, or delete anything outside the working directory.\n"
     "When the task is complete, reply with a short summary and do not call any tool."
 )
+
+
 class Config(BaseModel):
     """Fixed configuration of agent"""
 

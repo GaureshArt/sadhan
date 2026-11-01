@@ -30,8 +30,8 @@ Homepage = "https://blog.gauresh.art/demystifying-ai-harnesses"
 Source = "https://github.com/GaureshArt/sadhan"
 
 [project.scripts]
-sadhan = "sadhan.tui:main"
-sadhan-tui = "sadhan.tui:main"
+sadhan = "sadhan.__main__:main"
+
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
@@ -42,3 +42,10 @@ dev = [
     "pytest",
     "ruff",
 ]
+
+[tool.ruff]
+line-length = 150
+target-version = "py311"        
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

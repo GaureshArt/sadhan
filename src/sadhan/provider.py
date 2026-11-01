@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import json
+from collections.abc import Callable
 from logging import getLogger
 from typing import Any
 from uuid import uuid4
@@ -10,11 +10,11 @@ from .messages import Block, Message, TextBlock, ToolResultBlock, ToolUseBlock
 
 logger = getLogger(__name__)
 
-TextCallback = Callable[[str],None]
+TextCallback = Callable[[str], None]
 
 
 class Provider:
-    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None,on_text_delta:TextCallback | None = None) -> Message:
+    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None, on_text_delta: TextCallback | None = None) -> Message:
         raise NotImplementedError
 
 
@@ -82,13 +82,9 @@ class LiteLLMProvider(Provider):
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None,on_text_delta:TextCallback | None = None) -> Message:
+    async def chat(self, messages: list[Message], tools: list[dict], system_prompt: str | None, on_text_delta: TextCallback | None = None) -> Message:
         wire = self._to_wire(messages=messages, system_prompt=system_prompt)
-        kwargs: dict[str, Any] = {
-            "model": self.model,
-            "messages": wire,
-            "stream":True
-        }
+        kwargs: dict[str, Any] = {"model": self.model, "messages": wire, "stream": True}
         chunks = []
         if self.api_base:
             kwargs["api_base"] = self.api_base
@@ -101,7 +97,7 @@ class LiteLLMProvider(Provider):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     on_text_delta(delta)
-        response = stream_chunk_builder(chunks,messages=wire)
+        response = stream_chunk_builder(chunks, messages=wire)
 
         if response is None:
             raise RuntimeError("Model returned an empty stream")
