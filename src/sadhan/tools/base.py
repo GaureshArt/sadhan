@@ -1,4 +1,10 @@
+from collections.abc import Awaitable, Callable
+
 from pydantic import BaseModel
+
+from ..messages import ToolUseBlock
+
+Hook = Callable[[ToolUseBlock], Awaitable[str | None]]
 
 
 class Tool:
@@ -11,3 +17,6 @@ class Tool:
 
     async def run(self, args: BaseModel) -> str:
         raise NotImplementedError
+
+    async def close(self) -> None:
+        """Release resources (processes, connections). Called once at shutdown."""
